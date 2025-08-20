@@ -2,7 +2,7 @@
 layout: distill
 title: "Sharded Matrices and How to Multiply Them"
 # permalink: /main/
-description: "Here we'll explain how the biggest ML models are split (or “sharded”) across multiple accelerators. Since LLMs are mostly made up of matrix multiplications, understanding this boils down to understanding how to multiply matrices when they're split across devices. We develop a simple theory of sharded matrix multiplication based on the cost of TPU communication primitives."
+description: "When we train large ML models, we have to split (or “shard”) their parameters or inputs across many accelerators. Since LLMs are mostly made up of matrix multiplications, understanding this boils down to understanding how to multiply matrices when they're split across devices. We develop a simple theory of sharded matrix multiplication based on the cost of TPU communication primitives."
 date: 2025-02-04
 future: true
 htmlwidgets: true
@@ -52,7 +52,7 @@ toc:
   - name: "Partitioning Notation and Collective Operations"
   - subsections:
     - name: "A unified notation for sharding"
-    - name: "A quick aside: how would we describe this in code?"
+    - name: "How do we describe this in code?"
   - name: "Computation With Sharded Arrays"
   - subsections:
     - name: "Case 1: neither multiplicand has a sharded contracting dimension"
@@ -88,7 +88,7 @@ _styles: >
 
 ## Partitioning Notation and Collective Operations
 
-When we train an LLM on ten thousand TPUs, we're still doing abstractly the same computation as when we're training on one. The difference is that **our arrays don't fit in the HBM of a single TPU**, so we have to split them up.<d-footnote>It's worth noting that we may also choose to parallelize for speed. Even if we could fit on a smaller number of chips, scaling to more simply gives us more FLOPs/s. During inference, for instance, we can sometimes fit on smaller topologies but choose to scale to larger ones in order to reduce latency. Likewise, during training we often scale to more chips to reduce the step time.</d-footnote> We call this "*sharding*” or "*partitioning*” our arrays.
+When we train an LLM on ten thousand TPUs or GPUs, we're still doing abstractly the same computation as when we're training on one. The difference is that **our arrays don't fit in the HBM of a single TPU/GPU**, so we have to split them.<d-footnote>It's worth noting that we may also choose to parallelize for speed. Even if we could fit on a smaller number of chips, scaling to more simply gives us more FLOPs/s. During inference, for instance, we can sometimes fit on smaller topologies but choose to scale to larger ones in order to reduce latency. Likewise, during training we often scale to more chips to reduce the step time.</d-footnote> We call this "*sharding*” or "*partitioning*” our arrays. The art of scaling is figuring out how to shard our models so computation remains efficient.
 
 Here's an example 2D array **A** sharded across 4 TPUs:
 
@@ -101,12 +101,20 @@ Note how the sharded array still has the same *global* or *logical shape* as uns
 We use a variant of *named-axis notation* to describe *how* the tensor is sharded in blocks across the devices: we assume the existence of a 2D or 3D grid of devices called the **device mesh** where each axis has been given **mesh axis names** **e.g. X**, **Y, and Z.** We can then specify how the matrix data is laid out across the device mesh by describing how each named dimension of the array is partitioned across the physical mesh axes. We call this assignment a **sharding**.
 
 **Example (the diagram above)**: For the above diagram, we have:
-* **Sharding:** $A[I_X, J_Y]$, which tells us to shard the first axis, $I$, along the mesh axis $X$, and the second axis, $J$, along the mesh axis $Y$. This sharding tells us that each shard holds $1 / (\lvert X\rvert \cdot \lvert Y\rvert)$ of the array.
 * **Mesh:** the device mesh above `Mesh(devices=((0, 1), (2, 3)), axis_names=(‘X', ‘Y'))`, which tells us we have 4 TPUs in a 2x2 grid, with axis names $X$ and $Y$.
+* **Sharding:** $A[I_X, J_Y]$, which tells us to shard the first axis, $I$, along the mesh axis $X$, and the second axis, $J$, along the mesh axis $Y$. This sharding tells us that each shard holds $1 / (\lvert X\rvert \cdot \lvert Y\rvert)$ of the array.
 
 Taken together, we know that the local shape of the array (the size of the shard that an individual device holds) is $(\lvert I\rvert / 2, \lvert J\rvert / 2)$, where $$\lvert I\rvert$$ is the size of A's first dimension and $$\lvert J\rvert$$ is the size of A's second dimension.
 
-**Example (2D sharding across 1 axis)**: $A[I_{XY}, J]$ shards the first dimension (I) along both the X and Y hardware axes. The number of bytes per device is the same as the previous sharding but the local shape is different. It is now $(\lvert I\rvert /(\lvert X\rvert \cdot \lvert Y\rvert), \lvert J\rvert)$.
+<b markdown=1 style="color: #048affff;">Pop Quiz [2D sharding across 1 axis]:</b> Consider an array `fp32[1024, 4096]` with sharding $A[I_{XY}, J]$ and mesh `{'X': 8, 'Y': 2}`. How much data is held by each device? How much time would it take to load this array from HBM on H100s (assuming `3.4e12` memory bandwidth per chip)?
+
+{% details Click here for the answer. %}
+
+$A[I_{XY}, J]$ shards the first dimension (I) along both the X and Y hardware axes. The number of bytes per device is the same as the previous sharding but the local shape is different. It is now $(\lvert I\rvert /(\lvert X\rvert \cdot \lvert Y\rvert), \lvert J\rvert)$. For the given example, the global shape is `fp32[1024, 4096]`, so the local shape is `fp32[64, 4096]`.
+
+Since each GPU has `4 * 64 * 4096 = 262kB`, this would take about `1e6 / 3.4e12 = 294ns`, although likely significantly more due to various overheads since this is so small.
+
+{% enddetails %}
 
 **Visualizing these shardings:** Let's try to visualize these shardings by looking at a 2D array of data split over 4 devices:
 
@@ -116,7 +124,7 @@ We write the *fully-replicated* form of the matrix simply as $A[I, J]$ with no s
 
 {% include figure.liquid path="assets/img/sharding-colored2.png" class="img-fluid img-small" %}
 
-When we wish to indicate that one of these dimensions has been partitioned across a mesh axis, then we indicate so using a mesh-axis subscript.  For instance $A[I_X, J]$ would mean that the **I** logical axis has been partitioned across the **X** mesh dimension, but that the **J** dimension is *not* partitioned, and the blocks remain *partially-replicated* across the **Y** mesh axis.
+We can indicate that one of these dimensions has been partitioned across a mesh axis with a subscript mesh axis. For instance $A[I_X, J]$ would mean that the **I** logical axis has been partitioned across the **X** mesh dimension, but that the **J** dimension is *not* partitioned, and the blocks remain *partially-replicated* across the **Y** mesh axis.
 
 {% include figure.liquid path="assets/img/sharding-colored3.png" class="img-fluid img-small" %}
 
@@ -142,9 +150,9 @@ Lastly, note that we *cannot* have multiple named axes sharded along the *same* 
 
 {% enddetails %}
 
-### A quick aside: how would we describe this in code?
+### How do we describe this in code?
 
-JAX uses a named sharding syntax that very closely matches the abstract syntax we describe above. We'll talk more about this in [Section 10](../jax-stuff), but here's a quick preview. You can play with this in a Google Colab [here](https://colab.research.google.com/drive/15cxw66eABwZPG-V4QFmbLfiykPFf_gaP?usp=sharing) and profile the result to see how JAX handles different shardings. This snippet does 3 things:
+So far we've avoided talking about code, but now is a good chance for a sneak peek. JAX uses a named sharding syntax that very closely matches the abstract syntax we describe above. We'll talk more about this in [Section 10](../jax-stuff), but here's a quick preview. You can play with this in a Google Colab [here](https://colab.research.google.com/drive/15cxw66eABwZPG-V4QFmbLfiykPFf_gaP?usp=sharing) and profile the result to see how JAX handles different shardings. This snippet does 3 things:
 
 1. Creates a **jax.Mesh** that maps our 8 TPUs into a 4x2 grid with names ‘X' and ‘Y' assigned to the two axes.
 2. Creates matrices A and B where A is sharded along both its dimensions and B is sharded along the output dimension.
@@ -184,11 +192,11 @@ Obviously, this depends on the computation involved.
 * For *elementwise* operations, there is **no overhead** for operating on a distributed array.
 * When we wish to perform operations across elements resident on many devices, things get complicated. Thankfully, for most machine learning nearly all computation takes place in the form of matrix multiplications, and they are relatively simple to analyze.
 
-The rest of this section will deal with how to multiply sharded matrices. To a first approximation, this involves moving chunks of a matrix around so you can fully multiply or sum each chunk. **Each sharding will involve different communication.** For example, $A[I_X, J] \cdot B[J, K_Y] \to C[I_X, K_Y]$ can be multiplied without any communication because the *contracting dimension* (J, the one we're actually summing over) is unsharded. However, if we wanted the output unsharded (i.e. $A[I_X, J] \cdot B[J, K_Y] \to C[I, K]$), we would need to copy $A$ or $C$ to every device. These two choices have different communication costs, so we need to calculate this cost and pick the lowest one.
+The rest of this section will deal with how to multiply sharded matrices. To a first approximation, this involves moving chunks of a matrix around so you can fully multiply or sum each chunk. **Each sharding will involve different communication.** For example, $A[I_X, J] \cdot B[J, K_Y] \to C[I_X, K_Y]$ can be multiplied without any communication because the *contracting dimension* (J, the one we're actually summing over) is unsharded. However, if we wanted the output unsharded (i.e. $A[I_X, J] \cdot B[J, K_Y] \to C[I, K]$), we would need to copy $A$ or $C$ to every device (using an *AllGather*). These two choices have different communication costs, so we need to calculate this cost and pick the lowest one.
 
 {% details You can think of this in terms of "block matrix multiplication". %}
 
-First let's recall the concept of a "block matrix”, or a nested matrix of matrices:
+To understand this, it can be helpful to recall the concept of a "block matrix”, or a nested matrix of matrices:
 
 $$\begin{equation}
 \begin{pmatrix}
