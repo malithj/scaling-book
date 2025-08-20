@@ -253,16 +253,15 @@ This is all quite theoretical. In practice we often don't quite see a sharp roof
 
 We've spent some time looking at bandwidth and FLOPs, but not at memory. The memory picture looks a lot different at inference time, thanks to our new data structure, the KV cache. For this section, let's pick a real model (LLaMA 2-13B) to demonstrate how different things look:
 
-
-| hyperparam               | value  |
-| ------------------------ | ------ |
-| n\_layers (L)            | 40     |
-| d\_model (D)             | 5,120  |
-| ffw\_multiplier (F // D) | 2.7    |
-| n\_heads (N)             | 40     |
-| n\_kv\_heads (K)         | 40     |
-| d\_qkv (H)               | 128    |
-| n\_embeddings (V)        | 32,000 |
+| hyperparam         | value  |
+| ------------------ | ------ |
+| L (num_layers)     | 40     |
+| D (d_model)        | 5,120  |
+| F (ffw_dimension)  | 13,824 |
+| N (num_heads)      | 40     |
+| K (num_kv_heads)   | 40     |
+| H (qkv_dim)        | 128    |
+| V (num_embeddings) | 32,000 |
 
 What's using memory during inference? Well, obviously, our parameters. Counting those, we have:
 
@@ -498,15 +497,15 @@ We also have a PyTorch version of JetStream available [here](https://github.com/
 
 I'm going to invent a new model based on LLaMA-2 13B for this section. Here are the details:
 
-| hyperparam | value  |
-| :--------: | :----: |
-|     L      |   64   |
-|     D      | 4,096  |
-|     F      | 16,384 |
-|     N      |   32   |
-|     K      |   8    |
-|     H      |  256   |
-|     V      | 32,128 |
+| hyperparam         | value  |
+| :----------------- | :----- |
+| L (num_layers)     | 64     |
+| D (d_model)        | 4,096  |
+| F (ffw_dimension)  | 16,384 |
+| N (num_heads)      | 32     |
+| K (num_kv_heads)   | 8      |
+| H (qkv_dim)        | 256    |
+| V (num_embeddings) | 32,128 |
 
 **Question 1:** How many parameters does the above model have? How large are its KV caches per token in int8? *You can assume we share the input and output projection matrices.*
 
@@ -681,7 +680,7 @@ With speculative sampling, we use a smaller, cheaper model to generate tokens an
 
 **Why is this a latency win?** This scheme still requires us to do the FLOPs-equivalent of one forward pass through the big model for every token, but because we can batch a bunch of tokens together, we can do all these FLOPs in one forward pass and take advantage of the fact that we're *not* *compute-bound* to score more tokens for free.
 
-Every accepted token becomes more expensive in terms of FLOPs on average (since some will be rejected, and we have to call a draft model), but we wring more FLOPs out of the hardware, and the small model is cheap, so we win overall. Since everything has been checked by the big model, we don't change the sampling distribution at all (though the exact trajectory will differ for non-greedy).
+Every accepted token becomes more expensive in terms of FLOPs on average (since some will be rejected, and we have to call a draft model), but we wring more FLOPs out of the hardware, and the small model is cheap, so we win overall. We also share KV cache loads across multiple steps, so **speculative decoding can also be a throughput win for long context.** Since everything has been checked by the big model, we don't change the sampling distribution at all (though the exact trajectory will differ for non-greedy).
 
 For normal autoregressive sampling the token/s is the same as the step time. We are still beholden to the theoretical minimum step time according to the Arithmetic Intensity section here (in fact, Speculative Sampling step times are usually quite a bit slower than normal autoregressive sampling, but because we get more than 1 token out per step on average we can get much better tokens/s).
 
