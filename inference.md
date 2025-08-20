@@ -352,7 +352,7 @@ From a roofline standpoint, **prefill is almost identical to training** and almo
 
 **The general rule for sharding prefill:** here's a general set of rules for prefill. We'll assume we're doing prefill on a single sequence only (no batch dimension):
 
-1. *Model sharding:* We typically do some amount of model parallelism first, up to the point we become ICI-bound. As we saw in [Section 5](../training), this is around $F / 2550$ for 1 axis (usually around 4-8 way sharding).
+1. *Model sharding:* We typically do some amount of model parallelism first, up to the point we become ICI-bound. As we saw in [Section 5](../training), this is around $F / 2200$ for 1 axis (usually around 4-8 way sharding).
 2. *Sequence parallelism:* Beyond this, we do sequence parallelism (like data parallelism but sharding across the sequence dimension). While sequence parallelism introduces some extra communication in attention, it is typically fairly small at longer contexts. As with training, we can overlap the communication and computation (using collective matmuls for Megatron and ring attention respectively).
 
 <p markdown=1 class="takeaway">**Takeaway:** during prefill, almost any sharding that can work during training can work fine. Do model parallelism up to the ICI bound, then do sequence parallelism.</p>
