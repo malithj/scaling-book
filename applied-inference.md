@@ -230,7 +230,7 @@ A further increase would give an even bigger win! The big takeaway is that **the
 
 As discussed in the previous section, we only really have one option for sharding during generation: model parallelism. How much can we do before we become communication bound? As we've discussed in the previous section, our models become communication bound roughly when
 
-$$Y > \frac{F \cdot n_\text{axes}}{2200}$$
+$$Y > \frac{F \cdot M_Y}{2200}$$
 
 For LLaMA 3-70B we have `F = 28,672`, so if we do 2 axes of model sharding this gives us roughly $$Y = 28672 \cdot 2 / 2200 = 26$$, so in general we could scale up to about 16 chips without being communication bound, which lets us use a `4x4` but not a `4x8`. Generally, since we do not perfectly overlap computation, even this estimate is overly optimistic.
 

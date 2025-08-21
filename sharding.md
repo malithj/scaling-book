@@ -347,13 +347,13 @@ Here is an empirical measurement of AllGather bandwidth on a TPU v5e 8x16 slice.
 
 Note both that we achieve only about 95% of the peak claimed bandwidth (`4.5e10`) and that we achieve this peak only at about 10MB, which when 16-way sharded gives us about 500kB per device.
 
-**What happens when we AllGather over multiple axes?** When we gather over multiple axes, we have multiple dimensions of ICI over which to perform the gather. For instance, AllGather<sub>XY</sub>([B, D<sub>XY</sub>]) operates over two hardware mesh axes. This increases the available bandwidth by a factor of $$n_\text{axes}$$.
+**What happens when we AllGather over multiple axes?** When we gather over multiple axes, we have multiple dimensions of ICI over which to perform the gather. For instance, AllGather<sub>XY</sub>([B, D<sub>XY</sub>]) operates over two hardware mesh axes. This increases the available bandwidth by a factor of $N_\text{axes}$.
 
 {% details For the full details, click here. %}
 
 In general we have
 
-$$T_{total} = \max \left[ \frac{T_{min} \cdot \sum_{i} |X_i|}{2}, \frac{V}{W_\text{ici} \cdot n_\text{axes}} \right]$$
+$$T_{total} = \max \left[ \frac{T_{min} \cdot \sum_{i} |X_i|}{2}, \frac{V}{W_\text{ici} \cdot N_\text{axes}} \right]$$
 
 where $$\sum_i \lvert X_i \rvert / 2$$ is the length of the longest path in the TPU mesh.
 
