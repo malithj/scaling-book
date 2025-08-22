@@ -169,7 +169,7 @@ mesh = jax.make_mesh(axis_shapes=(4, 2), axis_names=('X', 'Y'))
 # A little utility function to help define our sharding. A PartitionSpec is our
 # sharding (a mapping from axes to names).
 def P(*args):
-  return jax.NamedSharding(mesh, jax.P(*args))
+  return jax.NamedSharding(mesh, jax.sharding.PartitionSpec(*args))
 
 # We shard both A and B over the non-contracting dimension and A over the contracting dim.
 A = jnp.zeros((8, 2048), dtype=jnp.bfloat16, device=P('X', 'Y'))
@@ -177,8 +177,7 @@ B = jnp.zeros((2048, 8192), dtype=jnp.bfloat16, device=P(None, 'Y'))
 
 # We can perform a matmul on these sharded arrays! out_shardings tells us how we want
 # the output to be sharded. JAX/XLA handles the rest of the sharding for us.
-compiled = jax.jit(lambda A, B: jnp.einsum('BD,DF->BF', A, B), out_shardings=P('X', 'Y')).lower(A, B).compile()
-y = compiled(A, B)
+y = jax.jit(lambda A, B: jnp.einsum('BD,DF->BF', A, B), out_shardings=P('X', 'Y'))(A, B)
 ```
 
 The cool thing about JAX is that these arrays behave as if they're unsharded! `B.shape` will tell us the global or logical shape (2048, 8192). We have to actually look at `B.addressable_shards` to see how it's locally sharded. We can perform operations on these arrays and JAX will attempt to figure out how to broadcast or reshape them to perform the operations. For instance, in the above example, the local shape of **A** is `[2, 1024]` and for **B** is `[2048, 4096]`. JAX/XLA will automatically add communication across these arrays as necessary to perform the final multiplication.
@@ -268,7 +267,7 @@ You can think of these as rules that simply need to be followed, but it's also v
 
 ### Case 1: neither multiplicand has a sharded contracting dimension
 
-**Lemma:** when multiplying partitioned tensors, the computation is valid and the output follows the sharding of the inputs *unless* the contracting dimension is sharded or both tensors have a non-contracting dimension sharded along the same axis. For example, this works fine
+**Lemma:** when multiplying sharded matrices, the computation is valid and the output follows the sharding of the inputs *unless* the contracting dimension is sharded or both matrices are sharded along the same axis. For example, this works fine
 
 $$\begin{equation*}
 \mathbf{A}[I_X, J] \cdot \mathbf{B}[J, K_Y] \rightarrow \mathbf{C}[I_X, K_Y]
@@ -287,57 +286,63 @@ Because neither **A** nor **B** has a sharded contracting dimension **J**, we ca
 
 ### Case 2: one multiplicand has a sharded contracting dimension
 
-Let us consider the simple case of the distributed matrix multiply of **A** sharded in the contracting **J** dimension against a fully replicated **B:**
+Let's consider what to do when one input **A** is sharded along the contracting **J** dimension and **B** is fully replicated:
 
 $$\mathbf{A}[I, J_X] \cdot \mathbf{B}[J, K] \rightarrow \mathbf{C}[I, K]$$
 
-We cannot simply perform local matrix multiplies of the local **A**, **B** blocks against one another as we're missing the full data from the contracting axis of **A**. Typically, we first "**AllGather**" the shards of **A** together locally, and only then multiply against **B:**
+We cannot simply multiply the local chunks of **A** and **B** because we need to sum over the full contracting dimension of **A**, which is split across the X axis. Typically, we first "**AllGather**" the shards of **A** so every device has a full copy, and only then multiply against **B:**
 
 $$\textbf{AllGather}_X[I, J_X] \rightarrow \mathbf{A}[I, J]$$
 
 $$\mathbf{A}[I, J] \cdot \mathbf{B}[J, K] \rightarrow \mathbf{C}[I, K]$$
 
-AllGathers *remove sharding* along an axis and reassembles the shards spread across devices onto *each* device along that axis. Using the notation above, an AllGather removes a subscript from a set of axes, e.g.
+This way the actual multiplication can be done fully on each device.
+
+<p markdown=1 class="takeaway">**Takeaway:** When multiply matrices where one of the matrices is sharded along the contracting dimension, we general AllGather it first so the contraction is no longer sharded, then do a local matmul.</p>
+
+Note that when **B** is not also sharded along X, we could also do the local partial matmul and then sum (or *AllReduce*) the sharded partial sums, which can be faster in some cases. See Question 4 [below](#some-problems-to-work).
+
+**What is an AllGather?** An AllGather is the first core [MPI](https://en.wikipedia.org/wiki/Message_Passing_Interface) communication primitive we will discuss. An AllGather *removes the sharding* along an axis and reassembles the shards spread across devices onto *each* device along that axis. Using the notation above, an AllGather removes a subscript from a set of axes, e.g.
 
 $$\textbf{AllGather}_{XY}(A[I_{XY}, J]) \rightarrow A[I, J]$$
 
-We also don't have to remove all subscripts for a given dimension, e.g. $$A[I_{XY}, J] \rightarrow A[I_Y, J]$$ is also an AllGather, just over only a single axis.
-
-Note that we may also wish to use an AllGather to remove *non-contracting* dimension sharding, for instance the matrix multiply:
+We don't have to remove all subscripts for a given dimension, e.g. $$A[I_{XY}, J] \rightarrow A[I_Y, J]$$ is also an AllGather, just over only a single axis. Also note that we may also wish to use an AllGather to remove *non-contracting* dimension sharding, for instance in the matrix multiply:
 
 $$A[I_X, J] \cdot B[J, K] \rightarrow C[I, K]$$
 
-We would similarly AllGather along **X** to remove the output sharding, however in this case we have the freedom of doing so before or after the matrix multiply, unlike in the case of AllGathering the contracting dimension, where we are forced to do so before performing the matrix multiply.
+We could either AllGather **A** initially to remove the input sharding, or we can do the sharded matmul and then AllGather the result **C**.
 
-**How is an AllGather actually performed?** To perform an AllGather along a single axis, we need to pass all the shards around the axis until every device has a copy. Figure 1 shows an example. Each of the 8 devices starts with 1 / 8th of the array and ends up with all copies. One efficient way to do this is to have each device pass its shard around the sharding dimension ring, either in one direction or both directions. If we do one direction, it takes $$N - 1$$ hops of size $$\text{total size} / N$$ per-link, otherwise we have $\lceil \frac{N}{2} \rceil$ hops of size $$2 \cdot \text{total size} / N$$ per link.
+**How is an AllGather actually performed?** To perform a 1-dimensional AllGather around a single TPU axis (a ring), we basically have each TPU pass its shard around a ring until every device has a copy.<d-footnote>A GPU AllGather can also work like this, where you create a ring out of the GPUs in a node and pass the chunks around in that (arbitrary) order.</d-footnote> Here is an animation:
 
-{% include figure.liquid path="assets/img/all-gather.gif" %}
+{% include figure.liquid path="assets/img/all-gather.gif" caption="<b>Figure:</b> An animation showing how to perform an AllGather around a set of 8 TPU or GPU devices. Each device starts with 1 / 8th of the array and ends up with a full copy." %}
 
-**How long does this take?** Let's take the bidirectional AllGather and calculate how long it takes. Let $$V$$ be the number of bytes in the array, and $$\lvert X\rvert$$ be the number of shards on the contracting dimension. Then from the above diagram, each hop sends $V / \lvert X\rvert$ bytes in each direction, so each hop takes
+We can either do an AllGather in one direction or both directions (two directions is shown above). If we do one direction, each TPU sends chunks of size $\text{bytes} / N$ over $N - 1$ hops around the ring. If we do two directions, we have $\lceil \frac{N}{2} \rceil$ hops of size $2 \cdot \text{bytes} / N$.
 
-$$T_{hop} = \frac{2 \cdot V}{|X| \cdot W_\text{ici}}$$
+**How long does this take?** Let's take the bidirectional AllGather and calculate how long it takes. Let $$V$$ be the number of bytes in the array, and $X$ be the number of shards on the contracting dimension. Then from the above diagram, each hop sends $V / \lvert X\rvert$ bytes in each direction, so each hop takes
 
-where $$W_\text{ici}$$ is the **bidirectional** ICI bandwidth.<d-footnote>The factor of 2 in the numerator comes from the fact that we're using the bidirectional bandwidth. We send $V / |X|$ in each direction, or $2V / |X|$ total.</d-footnote> We need to send a total of $\lvert X\rvert / 2$ hops to reach every TPU<d-footnote>technically, $\lceil | X | / 2 \rceil$</d-footnote>, so the total reduction takes
+$$T_{hop} = \frac{2 \cdot V}{X \cdot W_\text{ici}}$$
 
-$$T_{total} = \frac{2 \cdot V \cdot |X|}{2 \cdot |X| \cdot W_\text{ici}}$$
+where $W_\text{ici}$ is the **bidirectional** ICI bandwidth.<d-footnote>The factor of 2 in the numerator comes from the fact that we're using the bidirectional bandwidth. We send $V / X$ in each direction, or $2V / X$ total.</d-footnote> We need to send a total of $\lvert X\rvert / 2$ hops to reach every TPU<d-footnote>technically, $\lceil X / 2 \rceil$</d-footnote>, so the total reduction takes
+
+$$T_{total} = \frac{2 \cdot V \cdot X}{2 \cdot X \cdot W_\text{ici}}$$
 
 $$T_{total} = \frac{V}{W_\text{ici}}$$
 
-Note that this **doesn't depend on $$\lvert X\rvert$$!** That's kind of striking, because it means even though our TPUs are only locally connected, the locality of the connections doesn't matter. We're just bottlenecked by the speed of each link.
+Note that this **doesn't depend on $X$!** That's kind of striking, because it means even though our TPUs are only locally connected, the locality of the connections doesn't matter. We're just bottlenecked by the speed of each link.
 
 <p markdown=1 class="takeaway">**Takeaway:** when performing an AllGather (or a ReduceScatter or AllReduce) in a throughput-bound regime, the actual communication time depends only on the size of the array and the available bandwidth, not the number of devices over which our array is sharded!</p>
 
-**A note on ICI latency:** Each hop over an ICI link has some intrinsic overhead regardless of the data volume. This is typically around 1us. This means when our array $$A$$ is very small and each hop takes less than 1us, we can enter a "latency-bound" regime where the calculation _does_ depend on $$\lvert X \rvert$$.
+**A note on ICI latency:** Each hop over an ICI link has some intrinsic overhead regardless of the data volume. This is typically around 1us. This means when our array $$A$$ is very small and each hop takes less than 1us, we can enter a "latency-bound" regime where the calculation _does_ depend on $X$.
 
 {% details For the full details, click here. %}
 
 Let $$T_\text{min}$$ be the minimum time for a single hop. Then
 
-$$T_{hop} = \max \left[ T_{min}, \frac{2 \cdot V}{|X| \cdot W_\text{ici}} \right]$$
+$$T_{hop} = \max \left[ T_{min}, \frac{2 \cdot V}{X \cdot W_\text{ici}} \right]$$
 
-$$T_{total} = \max \left[ \frac{T_{min} \cdot |X|}{2}, \frac{V}{W_\text{ici}} \right]$$
+$$T_{total} = \max \left[ \frac{T_{min} \cdot X}{2}, \frac{V}{W_\text{ici}} \right]$$
 
-since we perform $$\lvert X \rvert / 2$$ hops. For large reductions or gathers, we're solidly bandwidth bound. We're sending so much data that the overhead of each hop is essentially negligible. But for small arrays (e.g. when sampling from a model), this isn't negligible, and the ICI bandwidth isn't relevant. We're bound purely by latency. Another way to put this is that given a particular TPU, e.g. TPU v5e with `4.5e10` unidirectional ICI bandwidth, sending any buffer under `4.5e10 * 1e-6 = 45kB` will be latency bound.
+since we perform $X / 2$ hops. For large reductions or gathers, we're solidly bandwidth bound. We're sending so much data that the overhead of each hop is essentially negligible. But for small arrays (e.g. when sampling from a model), this isn't negligible, and the ICI bandwidth isn't relevant. We're bound purely by latency. Another way to put this is that given a particular TPU, e.g. TPU v5e with `4.5e10` unidirectional ICI bandwidth, sending any buffer under `4.5e10 * 1e-6 = 45kB` will be latency bound.
 
 {% enddetails %}
 
@@ -345,7 +350,7 @@ Here is an empirical measurement of AllGather bandwidth on a TPU v5e 8x16 slice.
 
 {% include figure.liquid path="assets/img/all-gather-bandwidth.png" class="img-small" caption="<b>Figure:</b> empirical bandwidth and estimated link bandwidth for TPU v5e during an AllGather. BW in orange is the actual bytes per second AllGathered, while the blue curve shows the empirical unidirectional link bandwidth calculated according to the known cost of the collective." %}
 
-Note both that we achieve only about 95% of the peak claimed bandwidth (`4.5e10`) and that we achieve this peak only at about 10MB, which when 16-way sharded gives us about 500kB per device.
+Note both that we achieve only about 95% of the peak claimed bandwidth (`4.5e10`) and that we achieve this peak at about 10MB, which when 16-way sharded gives us about 500kB per device (*aside: this is much better than GPUs).
 
 **What happens when we AllGather over multiple axes?** When we gather over multiple axes, we have multiple dimensions of ICI over which to perform the gather. For instance, AllGather<sub>XY</sub>([B, D<sub>XY</sub>]) operates over two hardware mesh axes. This increases the available bandwidth by a factor of $N_\text{axes}$.
 
