@@ -588,7 +588,7 @@ If we go beyond a single node, we can do roughly the same reduction as above, bu
 
 {% enddetails %}
 
-**Question 5 [2-way AllGather cost]:** Consider the cost of an AllGather over exactly 2 nodes. What is it, precisely? Make sure to calculate the precise cost and not the approximation.
+**Question 5 [2-way AllGather cost]:** Calculate the precide cost of an AllGather of $B$ bytes over exactly 2 nodes. *Make sure to calculate the precise cost and not the approximation, and consider both the intrea-node and cross-node cost.*
 
 {% details Click here for the answer. %}
 
