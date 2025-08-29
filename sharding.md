@@ -354,15 +354,11 @@ Note both that we achieve only about 95% of the peak claimed bandwidth (`4.5e10`
 
 **What happens when we AllGather over multiple axes?** When we gather over multiple axes, we have multiple dimensions of ICI over which to perform the gather. For instance, AllGather<sub>XY</sub>([B, D<sub>XY</sub>]) operates over two hardware mesh axes. This increases the available bandwidth by a factor of $N_\text{axes}$.
 
-{% details For the full details, click here. %}
-
-In general we have
+When considering latency, we end up with the general rule:
 
 $$T_{total} = \max \left[ \frac{T_{min} \cdot \sum_{i} |X_i|}{2}, \frac{V}{W_\text{ici} \cdot N_\text{axes}} \right]$$
 
 where $$\sum_i \lvert X_i \rvert / 2$$ is the length of the longest path in the TPU mesh.
-
-{% enddetails %}
 
 <b markdown=1 style="color:rgb(144, 92, 255);">Pop Quiz 2 [AllGather time]:</b> Using the numbers from [Part 2](../tpus), how long does it take to perform the AllGather<sub>Y</sub>([E<sub>Y</sub>, F]) → [E, F] on a TPUv5e with a 2D mesh `{'X': 8, 'Y': 4}`, $$E = 2048$$, $$F = 8192$$ in bfloat16? What about with $$E=256, F=256$$?
 
@@ -376,6 +372,8 @@ where $$\sum_i \lvert X_i \rvert / 2$$ is the length of the longest path in the 
 *For part (1)*, we can use the formula above. Since we're performing the AllGather over one axis, we have $T_{\text{comms}} = \text{34e6} / \text{9e10} = \text{377us}$. To check that we're not latency-bound, we know over an axis of size 4, we'll have at most 3 hops, so our latency bound is something like 3us, so we're not close. However, TPU v5e only has a wraparound connection when one axis has size 16, so here *we actually can't do a fully bidirectional AllGather*. We have to do 3 hops for data from the edges to reach the other edge, so in theory we have more like $T_{\text{comms}} = 3 * \text{8.4e6} / \text{4.5e10} = 560\mu s$. [**Here's**](https://imgur.com/a/RkvpRGQ) **an actual profile** from [this Colab](https://colab.research.google.com/drive/15tDZMfNqm2vJjvSzw5VC9qtSwc5td-oV?usp=sharing), which shows $680 \mu s$, which is reasonable since we're likely not getting 100% of the theoretical bandwidth! *For part (2)* each shard has size `64 * 256 * 2 = 32kB. 32e3 / 4.5e10 = 0.7us`, so we're latency bound. Since we have 3 hops, this will take roughly 3 * 1us = 3us. [In practice, it's closer to 8us.](https://imgur.com/a/HZLQmYs)
 
 {% enddetails %}
+
+<p markdown=1 class="takeaway">**Note:** when we have a 2D mesh like `{'X': 16, 'Y': 4}`, it is not necessary for each axis to correspond to a specific _hardware_ axis. This means for instance the above could describe a 4x4x4 TPU v5p cube with 2 axes on the $X$ axis. This will come into play later when we describe data parallelism over multiple axes.</p>
 
 ### Case 3: both multiplicands have sharded contracting dimensions
 

@@ -194,7 +194,7 @@ Let's stick to our setting from above and say we want to train LLaMA 3-70B with 
 
 $$X_{opt} = \sqrt{\frac{2BN}{F}} = \sqrt{\frac{2 \cdot 4.19e6 \cdot 8960}{28672}} = 1618$$
 
-Rounding to a reasonable multiple of 2, that gives us roughly 2048-way FSDP and 4-way model parallelism. That should work well!
+Rounding to a reasonable multiple of 2, that gives us roughly 2048-way FSDP and 4-way tensor parallelism parallelism. That should work well!
 
 {% enddetails %}
 
