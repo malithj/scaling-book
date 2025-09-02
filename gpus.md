@@ -502,15 +502,15 @@ We use the term "Collective Bandwidth" to describe the effective bandwidth at wh
 
 $$\text{AllReduce}_X(A[I_Y, J]\ \{ U_X \})$$
 
-where we are AllReducing over an array that is itself sharded along another axis $Y$. On TPUs, the overall cost of this operation is reduced by a factor of $1 / Y$ compared to the unsharded version since we’re sending $1 / Y$ as much data per axis. On GPUs, the cost depends on which axis is the "inner" one (intra-node vs. inter-node) and whether each shard spans more than a single node. Assuming $Y$ is the inner axis here, the overall cost is reduced effectively by $Y$, but only if $Y$ spans multiple nodes:
+where we are AllReducing over an array that is itself sharded along another axis $Y$. On TPUs, the overall cost of this operation is reduced by a factor of $1 / Y$ compared to the unsharded version since we’re sending $1 / Y$ as much data per axis. On GPUs, the cost depends on which axis is the "inner" one (intra-node vs. inter-node) and whether each shard spans more than a single node. Assuming $Y$ is the inner axis, and the array has $\text{bytes}$ total bytes, the overall cost is reduced effectively by $Y$, but only if $Y$ spans multiple nodes:
 
-$$T_\text{comms at node} = \frac{\text{bytes} \cdot D_\text{node}}{\min(Y, D_\text{node}) \cdot W_\text{GPU egress}}$$
+$$T_\text{comms at node} = \frac{\text{bytes}}{W_\text{GPU egress}} \cdot \frac{1}{\min(Y, D_\text{node})}$$
 
-$$T_\text{comms in scale-out network} = \frac{\text{bytes} \cdot N}{Y \cdot W_\text{node egress}}$$
+$$T_\text{comms in scale-out network} = \frac{\text{bytes}}{W_\text{node egress}} \cdot \frac{D_\text{node}}{\max(D_\text{node}, Y)}$$
 
 $$T_\text{total} = \max(T_\text{comms at node}, T_\text{comms in scale-out network})$$
 
-where N is the number of GPUs and again D is the number of GPUs in a node (the degree of the node). As you can see, if $Y < D_\text{node}$, we get a win at the node level but generally don’t see a reduction in overall runtime, while if $Y > D_\text{node}$, we get a speedup proportional to the number of nodes spanned.
+where N is the number of GPUs and again $D_\text{node}$ is the number of GPUs in a node (the degree of the node). As you can see, if $Y < D_\text{node}$, we get a win at the node level but generally don’t see a reduction in overall runtime, while if $Y > D_\text{node}$, we get a speedup proportional to the number of nodes spanned.
 
 If we want to be precise about the ring reduction, the general rule for a tree AllGather<sub>X</sub>(A<sub>Y</sub> { U<sub>X</sub> }) (assuming Y is the inner axis) is
 
