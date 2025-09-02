@@ -585,7 +585,7 @@ For TPU v5p, the $\frac{C}{W_\text{dcn}}$ is about `4.46e14 / 6.25e9 = 71,360`. 
 
 **How much of a problem is this?** To take a specific example, say we want to train LLaMA-3 70B on TPU v5p with a BS of 2M tokens. LLaMA-3 70B has $F\approx 30,000$. From the above sections, we know the following:
 
-* We can do Tensor Parallelism up to above $Y = M_Y \cdot F / 2550 \approxeq 11 \cdot M_Y$$.
+* We can do Tensor Parallelism up to above $Y = M_Y \cdot F / 2550 \approxeq 11 \cdot M_Y$.
 * We can do FSDP so long as $B / N > 2550 / M_X$. That means if we want to train with BS=2M and 3 axes of data parallelism, we'd at most be able to use $\approx 2400$ chips, roughly a quarter of a TPU v5p pod.
 * When we combine FSDP + Tensor Parallelism, become comms-bound when we have $B / N < 2550^2 / 2 * 30,000 = 108$, so this lets us scale to roughly 18k chips! However, the maximum size of a TPU v5p pod is 8k chips, so beyond that we have to use DCN.
 
