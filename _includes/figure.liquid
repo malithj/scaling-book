@@ -7,6 +7,9 @@
     slot="{{ include.slot }}"
   {% endif %}
 >
+  {% if include.link %}
+    <a href="{{ include.path | relative_url }}">
+  {% endif %}
   <picture>
     <!-- Auto scaling with imagemagick -->
     <!--
@@ -77,7 +80,9 @@
       onerror="this.onerror=null; $('.responsive-img-srcset').remove();"
     >
   </picture>
-
+  {% if include.link %}
+    </a>
+  {% endif %}
   {% if include.caption %}
     <figcaption class="caption">{{ include.caption }}</figcaption>
   {% endif %}
