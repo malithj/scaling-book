@@ -598,7 +598,20 @@ This is true when $2 / W_\text{ici} < D / C$, or when $D > 2 * 2550 = 5100$, whi
 
 {% enddetails %}
 
-**Question 5 [minimum latency]**: Let's say I want to do a matmul $A[B, D] \cdot_D B[D, F] \to C[B, F]$ on a TPUv5p 4x4x4 with the lowest possible latency. How should my inputs be sharded? What is the total FLOPs and comms time?
+**Question 5 [minimum latency]**: Let's say I want to do a matmul $A[I, J] \cdot_J B[J, K] \to C[I, K]$ on a TPUv5p 4x4x4 with the lowest possible latency. Assume the inputs can be sharded arbitrarily but the result should be fully replicated. How should my inputs be sharded? What is the total FLOPs and comms time?
+
+{% details Click here for the (partial) answer. %}
+
+We won't provide a full answer here, but we'll start by describing the four most likely options:
+
+1. $A[I_{XYZ}, J] \cdot B[J, K]$ + AG at the end
+2. $A[I, J] \cdot B[J, K_{XYZ}]$ + AG at the end
+3. $A[I, J_{XYZ}] \cdot B[J_{XYZ}, K]$ + AR at the end
+4. $A[I, J] \cdot B[J, K]$ (fully replicated)
+
+We could also consider sharding different axes along different mesh axes, but that isn't likely to change the final cost. For all but (4), the total FLOPs per TPU is the same, but comms are different for each. We then simply need to calculate the comms cost for each and see which is lowest. The TLDR is that (1) and (2) are equally good.
+
+{% enddetails %}
 
 **Question 6:** Let's say we want to perform $A[I_X, J_Y] \cdot_J B[J_Y, K] \to C[I_X, K]$ on TPUv5e 4x4. What communication do we perform? How much time is spent on communication vs. computation?
 
