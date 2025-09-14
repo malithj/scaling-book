@@ -819,8 +819,9 @@ There’s a great deal of good reading on GPUs, but some of my favorites include
 * [Hot Chips Talk about the NVLink Switch](https://hc34.hotchips.org/assets/program/conference/day2/Network%20and%20Switches/NVSwitch%20HotChips%202022%20r5.pdf): fun reading about NVLink and NCCL collectives, especially including in-network reductions.
 * [DeepSeek-V3 Technical Report](https://arxiv.org/pdf/2412.19437): a good example of a large semi-open LLM training report, describing how they picked their sharding setup.
 * [How to Optimize a CUDA Matmul](https://siboehm.com/articles/22/CUDA-MMM): a great blog describing how to implement an efficient matmul using CUDA Cores, with an eye towards cache coherence on GPU.
-* [HuggingFace Ultra-Scale Playbook:](https://huggingface.co/spaces/nanotron/ultrascale-playbook) a guide to LLM parallelism on GPUs, which partly inspired this chapter.
-* [Making Deep Learning Go Brrrr From First Principles:](https://horace.io/brrr_intro.html): a more GPU and PyTorch-focused tutorial on LLM rooflines and performance engineering.
+* [HuggingFace Ultra-Scale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook): a guide to LLM parallelism on GPUs, which partly inspired this chapter.
+* [Making Deep Learning Go Brrrr From First Principles](https://horace.io/brrr_intro.html): a more GPU and PyTorch-focused tutorial on LLM rooflines and performance engineering.
+* [Cornell Understanding GPU Architecture site](https://cvw.cac.cornell.edu/gpu-architecture): a similar guide to this book, comparing GPU and CPU internals more specifically.
 
 ## Appendix A: How does this change with GB200?
 
