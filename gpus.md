@@ -768,7 +768,7 @@ GB200 SuperPods with 72-GPU nodes change this by adding more egress bandwidth ([
 
 1. At a minimum, how many H100s would we need simply to store the weights and optimizer?
 2. Say we want to train on 4096 H100 GPUs for 15T tokens. Say we achieved 45% MFU (Model FLOPs Utilization). How long would it take to train?
-3. LLaMA-3 70B has `F = 28,672` and was trained with a batch size of about 4M tokens. What is the most model parallelism we could do without being comms-bound? With this plus pure DP, could we train LLaMA-3 while staying compute-bound? What about ZeRO-3? What about with 8-way pipelining?
+3. LLaMA-3 70B has `F = 28,672` and was trained with a batch size of about 4M tokens. What is the most model parallelism we could do without being comms-bound? With this plus pure DP, could we train LLaMA-3 while staying compute-bound on 4k chips? What about ZeRO-3? What about with 8-way pipelining? *Note: consider both the communication cost and GPU memory usage.*
 
 {% details Click here for the answer. %}
 
@@ -795,7 +795,7 @@ Note that their sequence length is 4096 everywhere. For the 16B, 70B, and 314B m
 * **70B**: `384 * 4096 / 768 = 2048` tokens per GPU
 * **314B**: `1536 * 4096 / 3072 = 2048` tokens per GPU
 
-This means with the exception of the first, these all hover around 2k tokens per batch, which is notably around the critical threshold we calculated for FSDP. We had calculated that bound to be 2,472 tokens / GPU based on the spine level reduction, which should roughly come into play here. For both the 70B and 314B though, because we have 16 and 64-way model sharding respectively, we get 2x and 8x better throughput at the spine level, which means we should be compute-bound at roughly 1k and 300 tokens / step respectively.
+This means with the exception of the first, these all hover around 2k tokens per batch, which is notably around the critical threshold we calculated for FSDP. We had calculated that bound to be 2,472 tokens / GPU based on the spine level reduction, which should roughly come into play here. For both the 70B and 314B though, because we have 16 and 64-way model (PP + TP) sharding respectively, we get 2x and 8x better throughput at the spine level, which means we should be compute-bound at roughly 1k and 300 tokens / step respectively.
 
 {% enddetails %}
 
